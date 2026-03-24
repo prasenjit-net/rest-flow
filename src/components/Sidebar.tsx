@@ -32,6 +32,17 @@ function makeRequest(collectionId: string): RestRequest {
   };
 }
 
+function duplicateRequest(source: RestRequest): RestRequest {
+  const now = Date.now();
+  return {
+    ...source,
+    id: uuidv4(),
+    name: `${source.name} (copy)`,
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
 const METHOD_COLORS: Record<string, string> = {
   GET: 'text-green-400',
   POST: 'text-yellow-400',
@@ -102,6 +113,14 @@ export default function Sidebar({ onSelectRequest, selectedRequestId }: Props) {
   const deleteRequest = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
     await db.requests.delete(id);
+    await load();
+  };
+
+  const handleDuplicateRequest = async (req: RestRequest, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const copy = duplicateRequest(req);
+    await db.requests.add(copy);
+    onSelectRequest(copy);
     await load();
   };
 
@@ -199,6 +218,11 @@ export default function Sidebar({ onSelectRequest, selectedRequestId }: Props) {
                 >
                   <span className={`text-xs font-bold w-14 shrink-0 ${METHOD_COLORS[req.method] ?? 'text-gray-400'}`}>{req.method}</span>
                   <span className="flex-1 text-gray-300 text-sm truncate">{req.name}</span>
+                  <button
+                    onClick={e => handleDuplicateRequest(req, e)}
+                    className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-blue-400 text-xs px-1"
+                    title="Duplicate"
+                  >⧉</button>
                   <button
                     onClick={e => deleteRequest(req.id, e)}
                     className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-red-400 text-sm px-1"
