@@ -69,6 +69,7 @@ export default function HistoryBrowser({ onLoadRequest }: Props) {
   });
 
   const clearFiltered = async () => {
+    if (!confirm(`Delete ${filtered.length} filtered entries?`)) return;
     await db.history.bulkDelete(filtered.map(e => e.id));
     setSelected(null);
     await load();
@@ -105,9 +106,9 @@ export default function HistoryBrowser({ onLoadRequest }: Props) {
           <div className="flex items-center justify-between">
             <span className="text-gray-400 text-xs font-medium uppercase tracking-wider">Filters</span>
             <div className="flex gap-2">
-              {(filterCollectionId || filterRequestId) && filtered.length > 0 && (
+              {(filterCollectionId || filterRequestId) && filtered.length > 0 && filtered.length < entries.length && (
                 <button onClick={clearFiltered} className="text-xs text-orange-400 hover:text-orange-300">
-                  Clear filtered
+                  Clear filtered ({filtered.length})
                 </button>
               )}
               <button onClick={clearAll} className="text-xs text-red-400 hover:text-red-300">
