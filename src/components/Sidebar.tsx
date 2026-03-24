@@ -7,6 +7,7 @@ import type { RestCollection, RestRequest } from '../types';
 interface Props {
   onSelectRequest: (request: RestRequest) => void;
   selectedRequestId: string | null;
+  openRequestIds: string[];
 }
 
 const EXPORT_VERSION = '1.0';
@@ -53,7 +54,7 @@ const METHOD_COLORS: Record<string, string> = {
   OPTIONS: 'text-gray-400',
 };
 
-export default function Sidebar({ onSelectRequest, selectedRequestId }: Props) {
+export default function Sidebar({ onSelectRequest, selectedRequestId, openRequestIds }: Props) {
   const [collections, setCollections] = useState<RestCollection[]>([]);
   const [requests, setRequests] = useState<RestRequest[]>([]);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
@@ -210,14 +211,20 @@ export default function Sidebar({ onSelectRequest, selectedRequestId }: Props) {
                   title="Delete"
                 >×</button>
               </div>
-              {isOpen && colRequests.map(req => (
+              {isOpen && colRequests.map(req => {
+                const isActive = selectedRequestId === req.id;
+                const isOpen2 = openRequestIds.includes(req.id);
+                return (
                 <div
                   key={req.id}
-                  className={`flex items-center gap-2 pl-6 pr-2 py-1.5 cursor-pointer hover:bg-gray-800 group ${selectedRequestId === req.id ? 'bg-gray-800' : ''}`}
+                  className={`flex items-center gap-2 pl-6 pr-2 py-1.5 cursor-pointer hover:bg-gray-800 group ${isActive ? 'bg-gray-800 border-l-2 border-l-blue-500 pl-[22px]' : ''}`}
                   onClick={() => onSelectRequest(req)}
                 >
-                  <span className={`text-xs font-bold w-14 shrink-0 ${METHOD_COLORS[req.method] ?? 'text-gray-400'}`}>{req.method}</span>
+                  <span className={`text-xs font-bold w-14 shrink-0 font-mono ${METHOD_COLORS[req.method] ?? 'text-gray-400'}`}>{req.method}</span>
                   <span className="flex-1 text-gray-300 text-sm truncate">{req.name}</span>
+                  {isOpen2 && !isActive && (
+                    <span className="w-1.5 h-1.5 rounded-full bg-gray-500 shrink-0" title="Open in tab" />
+                  )}
                   <button
                     onClick={e => handleDuplicateRequest(req, e)}
                     className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-blue-400 text-xs px-1"
@@ -229,7 +236,8 @@ export default function Sidebar({ onSelectRequest, selectedRequestId }: Props) {
                     title="Delete"
                   >×</button>
                 </div>
-              ))}
+                );
+              })}
               {isOpen && colRequests.length === 0 && (
                 <div className="pl-8 py-1 text-gray-600 text-xs">No requests</div>
               )}

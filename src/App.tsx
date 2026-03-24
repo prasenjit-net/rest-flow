@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import { db } from './db/db';
 import { executeRequest } from './services/executor';
@@ -11,17 +11,27 @@ import EnvironmentManager from './components/EnvironmentManager';
 import HistoryBrowser from './components/HistoryBrowser';
 
 const HISTORY_LIMIT = 500;
+const HISTORY_TAB_ID = '__history__';
 
-type MainTab = 'editor' | 'history';
+interface RequestTab {
+  id: string; // = request.id — used for deduplication
+  request: RestRequest;
+  response: RestResponse | null;
+  isLoading: boolean;
+  error: string | null;
+}
+
+const METHOD_COLORS: Record<string, string> = {
+  GET: 'text-green-400', POST: 'text-yellow-400', PUT: 'text-blue-400',
+  PATCH: 'text-purple-400', DELETE: 'text-red-400', HEAD: 'text-gray-400', OPTIONS: 'text-gray-400',
+};
 
 export default function App() {
-  const [mainTab, setMainTab] = useState<MainTab>('editor');
-  const [selectedRequest, setSelectedRequest] = useState<RestRequest | null>(null);
+  const [tabs, setTabs] = useState<RequestTab[]>([]);
+  const [activeTabId, setActiveTabId] = useState<string | null>(null);
   const [activeEnvironment, setActiveEnvironment] = useState<RestEnvironment | null>(null);
-  const [response, setResponse] = useState<RestResponse | null>(null);
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [showEnvManager, setShowEnvManager] = useState(false);
+  const tabBarRef = useRef<HTMLDivElement>(null);
 
   const loadActiveEnv = async () => {
     const env = await db.environments.filter(e => e.isActive).first();
@@ -36,27 +46,57 @@ export default function App() {
     return () => clearInterval(id);
   }, []);
 
-  const handleSelectRequest = (req: RestRequest) => {
-    setSelectedRequest(req);
-    setResponse(null);
-    setError(null);
-    setMainTab('editor');
+  // Scroll newly activated tab into view
+  useEffect(() => {
+    if (!activeTabId || activeTabId === HISTORY_TAB_ID) return;
+    const el = tabBarRef.current?.querySelector(`[data-tabid="${activeTabId}"]`);
+    el?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  }, [activeTabId]);
+
+  // ── Tab management ──────────────────────────────────────────────────────────
+
+  const openTab = (req: RestRequest) => {
+    setTabs(prev => {
+      if (prev.find(t => t.id === req.id)) return prev; // already open — just focus
+      return [...prev, { id: req.id, request: req, response: null, isLoading: false, error: null }];
+    });
+    setActiveTabId(req.id);
   };
 
-  const handleSave = async (req: RestRequest) => {
-    setSelectedRequest(req);
+  const closeTab = (tabId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const idx = tabs.findIndex(t => t.id === tabId);
+    const next = tabs.filter(t => t.id !== tabId);
+    setTabs(next);
+    if (activeTabId === tabId) {
+      if (next.length > 0) {
+        setActiveTabId(next[Math.max(0, idx - 1)].id);
+      } else {
+        setActiveTabId(null);
+      }
+    }
+  };
+
+  const activeTab = tabs.find(t => t.id === activeTabId) ?? null;
+
+  const updateTab = (tabId: string, patch: Partial<RequestTab>) => {
+    setTabs(prev => prev.map(t => t.id === tabId ? { ...t, ...patch } : t));
+  };
+
+  // ── Request actions ─────────────────────────────────────────────────────────
+
+  const handleSave = async (tabId: string, req: RestRequest) => {
+    updateTab(tabId, { request: req });
     const { id, ...data } = req;
     await db.requests.update(id, data);
   };
 
-  const handleExecute = async (req: RestRequest) => {
-    setIsLoading(true);
-    setError(null);
-    setResponse(null);
+  const handleExecute = async (tabId: string, req: RestRequest) => {
+    updateTab(tabId, { isLoading: true, error: null, response: null });
     try {
       const resolved = resolveVariables(req, activeEnvironment);
       const res = await executeRequest(resolved);
-      setResponse(res);
+      updateTab(tabId, { response: res, isLoading: false });
 
       const collection = await db.collections.get(req.collectionId);
       await db.history.add({
@@ -83,9 +123,7 @@ export default function App() {
         await db.history.bulkDelete(oldest as string[]);
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setIsLoading(false);
+      updateTab(tabId, { error: err instanceof Error ? err.message : String(err), isLoading: false });
     }
   };
 
@@ -97,86 +135,109 @@ export default function App() {
     await loadActiveEnv();
   };
 
+  // ── Render ──────────────────────────────────────────────────────────────────
+
   return (
     <div className="flex h-screen bg-gray-900 text-gray-100 overflow-hidden">
       {/* Sidebar */}
       <div className="w-64 shrink-0 flex flex-col">
         <Sidebar
-          onSelectRequest={handleSelectRequest}
-          selectedRequestId={selectedRequest?.id ?? null}
+          onSelectRequest={openTab}
+          selectedRequestId={activeTab?.id ?? null}
+          openRequestIds={tabs.map(t => t.id)}
         />
       </div>
 
       {/* Main panel */}
-      <div className="flex-1 flex flex-col overflow-hidden">
+      <div className="flex-1 flex flex-col overflow-hidden min-w-0">
 
-        {/* Tab bar + environment */}
-        <div className="flex items-center border-b border-gray-700 bg-gray-900 px-2">
-          {/* Main tabs */}
-          <div className="flex items-end h-full gap-0.5 pt-1">
-            <TabButton
-              active={mainTab === 'editor'}
-              onClick={() => setMainTab('editor')}
-              icon="✏️"
-              label={selectedRequest ? selectedRequest.name : 'Editor'}
-            />
-            <TabButton
-              active={mainTab === 'history'}
-              onClick={() => setMainTab('history')}
-              icon="🕐"
-              label="History"
-            />
+        {/* Tab bar */}
+        <div className="flex items-stretch bg-gray-950 border-b border-gray-700 min-h-[38px]">
+          {/* Scrollable request tabs */}
+          <div ref={tabBarRef} className="flex overflow-x-auto flex-1 min-w-0" style={{ scrollbarWidth: 'none' }}>
+            {tabs.map(tab => {
+              const isActive = tab.id === activeTabId;
+              return (
+                <div
+                  key={tab.id}
+                  data-tabid={tab.id}
+                  onClick={() => setActiveTabId(tab.id)}
+                  className={`flex items-center gap-1.5 px-3 py-0 text-sm cursor-pointer shrink-0 select-none border-r border-gray-700 group transition-colors min-w-0 max-w-[200px] ${
+                    isActive
+                      ? 'bg-gray-900 text-white border-t-2 border-t-blue-500'
+                      : 'bg-gray-950 text-gray-400 hover:bg-gray-900/60 hover:text-gray-200 border-t-2 border-t-transparent'
+                  }`}
+                >
+                  <span className={`text-xs font-bold font-mono shrink-0 ${METHOD_COLORS[tab.request.method] ?? 'text-gray-400'}`}>
+                    {tab.request.method}
+                  </span>
+                  <span className="truncate flex-1 text-xs">{tab.request.name}</span>
+                  {tab.isLoading && (
+                    <span className="shrink-0 w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" />
+                  )}
+                  <button
+                    onClick={e => closeTab(tab.id, e)}
+                    className="shrink-0 text-gray-600 hover:text-white ml-0.5 leading-none text-base opacity-0 group-hover:opacity-100 transition-opacity"
+                    title="Close tab"
+                  >×</button>
+                </div>
+              );
+            })}
           </div>
 
-          {/* Environment selector pushed to right */}
-          <div className="ml-auto pr-2">
+          {/* History tab — pinned right */}
+          <div
+            onClick={() => setActiveTabId(HISTORY_TAB_ID)}
+            className={`flex items-center gap-1.5 px-4 text-sm cursor-pointer select-none shrink-0 border-l border-gray-700 transition-colors ${
+              activeTabId === HISTORY_TAB_ID
+                ? 'bg-gray-900 text-white border-t-2 border-t-blue-500'
+                : 'bg-gray-950 text-gray-400 hover:bg-gray-900/60 hover:text-gray-200 border-t-2 border-t-transparent'
+            }`}
+          >
+            🕐 <span className="text-xs">History</span>
+          </div>
+
+          {/* Environment selector */}
+          <div className="flex items-center px-3 border-l border-gray-700 shrink-0">
             <button
               onClick={() => setShowEnvManager(true)}
-              className="flex items-center gap-1.5 text-sm text-gray-300 hover:text-white border border-gray-600 rounded px-3 py-1 hover:border-gray-400 my-1.5"
+              className="flex items-center gap-1.5 text-xs text-gray-300 hover:text-white border border-gray-600 rounded px-2 py-1 hover:border-gray-400 whitespace-nowrap"
             >
               <span className={activeEnvironment ? 'text-green-400' : 'text-gray-500'}>●</span>
-              {activeEnvironment ? activeEnvironment.name : 'No Environment'}
+              {activeEnvironment ? activeEnvironment.name : 'No Env'}
             </button>
           </div>
         </div>
 
         {/* Tab content */}
         <div className="flex-1 overflow-hidden">
-          {mainTab === 'editor' && (
-            <div className="flex h-full overflow-hidden">
-              {selectedRequest ? (
-                <>
-                  <div className="flex-1 overflow-hidden border-r border-gray-700">
-                    <RequestEditor
-                      request={selectedRequest}
-                      onSave={handleSave}
-                      onExecute={handleExecute}
-                      isLoading={isLoading}
-                    />
-                  </div>
-                  <div className="flex-1 overflow-hidden">
-                    <ResponseViewer
-                      response={response}
-                      isLoading={isLoading}
-                      error={error}
-                    />
-                  </div>
-                </>
-              ) : (
-                <div className="flex-1 flex flex-col items-center justify-center text-gray-600 gap-2">
-                  <span className="text-4xl">✏️</span>
-                  <span className="text-sm">Select or create a request in the sidebar</span>
-                </div>
-              )}
-            </div>
-          )}
-
-          {mainTab === 'history' && (
+          {activeTabId === HISTORY_TAB_ID ? (
             <HistoryBrowser
-              onLoadRequest={(req) => {
-                handleSelectRequest(req);
-              }}
+              onLoadRequest={(req) => openTab(req)}
             />
+          ) : activeTab ? (
+            <div className="flex h-full overflow-hidden">
+              <div className="flex-1 overflow-hidden border-r border-gray-700">
+                <RequestEditor
+                  request={activeTab.request}
+                  onSave={(req) => handleSave(activeTab.id, req)}
+                  onExecute={(req) => handleExecute(activeTab.id, req)}
+                  isLoading={activeTab.isLoading}
+                />
+              </div>
+              <div className="flex-1 overflow-hidden">
+                <ResponseViewer
+                  response={activeTab.response}
+                  isLoading={activeTab.isLoading}
+                  error={activeTab.error}
+                />
+              </div>
+            </div>
+          ) : (
+            <div className="flex-1 h-full flex flex-col items-center justify-center text-gray-600 gap-3">
+              <span className="text-5xl">⚡</span>
+              <p className="text-sm">Open a request from the sidebar to get started</p>
+            </div>
           )}
         </div>
       </div>
@@ -189,29 +250,5 @@ export default function App() {
         />
       )}
     </div>
-  );
-}
-
-interface TabButtonProps {
-  active: boolean;
-  onClick: () => void;
-  icon: string;
-  label: string;
-}
-
-function TabButton({ active, onClick, icon, label }: TabButtonProps) {
-  return (
-    <button
-      onClick={onClick}
-      className={`flex items-center gap-1.5 px-4 py-2 text-sm rounded-t border-t border-x transition-colors max-w-[180px] ${
-        active
-          ? 'bg-gray-900 border-gray-700 text-white border-b-gray-900'
-          : 'bg-gray-950 border-transparent text-gray-400 hover:text-gray-200 hover:bg-gray-900/50'
-      }`}
-      style={active ? { marginBottom: '-1px' } : {}}
-    >
-      <span>{icon}</span>
-      <span className="truncate">{label}</span>
-    </button>
   );
 }
