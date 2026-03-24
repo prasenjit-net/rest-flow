@@ -3,6 +3,10 @@ import { v4 as uuidv4 } from 'uuid';
 import { db } from '../db/db';
 import type { RestEnvironment, EnvVariable } from '../types';
 
+function makeEnvironment(): RestEnvironment {
+  return { id: uuidv4(), name: 'New Environment', variables: [], isActive: false, createdAt: Date.now() };
+}
+
 interface Props {
   onClose: () => void;
   activeEnvironmentId: string | null;
@@ -16,21 +20,20 @@ export default function EnvironmentManager({ onClose, activeEnvironmentId, onSwi
   const load = async () => {
     const envs = await db.environments.toArray();
     setEnvironments(envs);
-    if (!selectedId && envs.length > 0) setSelectedId(envs[0].id);
+    return envs;
   };
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    db.environments.toArray().then(envs => {
+      setEnvironments(envs);
+      setSelectedId(prev => prev ?? (envs.length > 0 ? envs[0].id : null));
+    });
+  }, []);
 
   const selected = environments.find(e => e.id === selectedId) ?? null;
 
   const createEnv = async () => {
-    const env: RestEnvironment = {
-      id: uuidv4(),
-      name: 'New Environment',
-      variables: [],
-      isActive: false,
-      createdAt: Date.now(),
-    };
+    const env = makeEnvironment();
     await db.environments.add(env);
     await load();
     setSelectedId(env.id);

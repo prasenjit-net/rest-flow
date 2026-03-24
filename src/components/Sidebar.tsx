@@ -11,6 +11,27 @@ interface Props {
 
 const EXPORT_VERSION = '1.0';
 
+function makeCollection(name: string): RestCollection {
+  const now = Date.now();
+  return { id: uuidv4(), name, createdAt: now };
+}
+
+function makeRequest(collectionId: string): RestRequest {
+  const now = Date.now();
+  return {
+    id: uuidv4(),
+    collectionId,
+    name: 'New Request',
+    method: 'GET',
+    url: '',
+    headers: [],
+    body: '',
+    assertions: [],
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
 const METHOD_COLORS: Record<string, string> = {
   GET: 'text-green-400',
   POST: 'text-yellow-400',
@@ -37,13 +58,20 @@ export default function Sidebar({ onSelectRequest, selectedRequestId }: Props) {
   };
 
   useEffect(() => {
-    load();
+    // Inline initial fetch so setState runs in .then() callback, not synchronously in effect
+    Promise.all([
+      db.collections.orderBy('createdAt').toArray(),
+      db.requests.orderBy('updatedAt').reverse().toArray(),
+    ]).then(([cols, reqs]) => {
+      setCollections(cols);
+      setRequests(reqs);
+    });
     const id = setInterval(load, 2000);
     return () => clearInterval(id);
   }, []);
 
   const createCollection = async () => {
-    const col: RestCollection = { id: uuidv4(), name: 'New Collection', createdAt: Date.now() };
+    const col = makeCollection('New Collection');
     await db.collections.add(col);
     setExpanded(prev => new Set([...prev, col.id]));
     await load();
@@ -65,18 +93,7 @@ export default function Sidebar({ onSelectRequest, selectedRequestId }: Props) {
   };
 
   const createRequest = async (collectionId: string) => {
-    const req: RestRequest = {
-      id: uuidv4(),
-      collectionId,
-      name: 'New Request',
-      method: 'GET',
-      url: '',
-      headers: [],
-      body: '',
-      assertions: [],
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
-    };
+    const req = makeRequest(collectionId);
     await db.requests.add(req);
     onSelectRequest(req);
     await load();
@@ -124,7 +141,7 @@ export default function Sidebar({ onSelectRequest, selectedRequestId }: Props) {
   const toggleExpand = (id: string) =>
     setExpanded(prev => {
       const next = new Set(prev);
-      next.has(id) ? next.delete(id) : next.add(id);
+      if (next.has(id)) { next.delete(id); } else { next.add(id); }
       return next;
     });
 
