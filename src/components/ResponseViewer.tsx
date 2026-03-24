@@ -1,4 +1,7 @@
 import { useState } from 'react';
+import Prism from 'prismjs';
+import 'prismjs/components/prism-json';
+import 'prismjs/components/prism-markup';
 import type { RestResponse } from '../types';
 
 interface Props {
@@ -15,6 +18,21 @@ function statusColor(status: number): string {
   if (status >= 300) return 'text-yellow-400';
   if (status >= 200) return 'text-green-400';
   return 'text-gray-400';
+}
+
+function detectLang(contentType: string): string {
+  if (contentType.includes('json')) return 'json';
+  if (contentType.includes('xml') || contentType.includes('html')) return 'markup';
+  return '';
+}
+
+function highlightBody(body: string, lang: string): string {
+  if (!lang || !Prism.languages[lang]) return '';
+  try {
+    return Prism.highlight(body, Prism.languages[lang], lang);
+  } catch {
+    return '';
+  }
 }
 
 export default function ResponseViewer({ response, isLoading, error }: Props) {
@@ -46,6 +64,9 @@ export default function ResponseViewer({ response, isLoading, error }: Props) {
 
   const passed = response.assertionResults.filter(r => r.passed).length;
   const total = response.assertionResults.length;
+  const contentType = response.headers['content-type'] ?? '';
+  const lang = detectLang(contentType);
+  const highlighted = tab === 'body' ? highlightBody(response.body, lang) : '';
 
   return (
     <div className="flex flex-col h-full bg-gray-900">
@@ -75,9 +96,16 @@ export default function ResponseViewer({ response, isLoading, error }: Props) {
 
       <div className="flex-1 overflow-y-auto p-4">
         {tab === 'body' && (
-          <pre className="text-gray-100 text-sm font-mono whitespace-pre-wrap break-words">
-            {response.body}
-          </pre>
+          highlighted ? (
+            <pre
+              className="text-sm font-mono whitespace-pre-wrap break-words language-json"
+              dangerouslySetInnerHTML={{ __html: highlighted }}
+            />
+          ) : (
+            <pre className="text-gray-100 text-sm font-mono whitespace-pre-wrap break-words">
+              {response.body}
+            </pre>
+          )
         )}
         {tab === 'headers' && (
           <table className="w-full text-sm">

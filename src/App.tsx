@@ -9,17 +9,19 @@ import RequestEditor from './components/RequestEditor';
 import ResponseViewer from './components/ResponseViewer';
 import EnvironmentManager from './components/EnvironmentManager';
 import HistoryBrowser from './components/HistoryBrowser';
+import SaveRequestModal from './components/SaveRequestModal';
+import QuickOpen from './components/QuickOpen';
 
 const HISTORY_LIMIT = 500;
 const HISTORY_TAB_ID = '__history__';
 
 interface RequestTab {
-  id: string; // = request.id for saved requests; fresh UUID for unsaved history tabs
+  id: string;
   request: RestRequest;
   response: RestResponse | null;
   isLoading: boolean;
   error: string | null;
-  unsaved?: boolean; // true for tabs created from history — not persisted to DB
+  unsaved?: boolean;
 }
 
 const METHOD_COLORS: Record<string, string> = {
@@ -32,6 +34,9 @@ export default function App() {
   const [activeTabId, setActiveTabId] = useState<string | null>(null);
   const [activeEnvironment, setActiveEnvironment] = useState<RestEnvironment | null>(null);
   const [showEnvManager, setShowEnvManager] = useState(false);
+  const [showSaveModal, setShowSaveModal] = useState(false);
+  const [savingTab, setSavingTab] = useState<string | null>(null);
+  const [showQuickOpen, setShowQuickOpen] = useState(false);
   const tabBarRef = useRef<HTMLDivElement>(null);
 
   const loadActiveEnv = async () => {
@@ -47,7 +52,6 @@ export default function App() {
     return () => clearInterval(id);
   }, []);
 
-  // Scroll newly activated tab into view
   useEffect(() => {
     if (!activeTabId || activeTabId === HISTORY_TAB_ID) return;
     const el = tabBarRef.current?.querySelector(`[data-tabid="${activeTabId}"]`);
@@ -58,7 +62,7 @@ export default function App() {
 
   const openTab = (req: RestRequest) => {
     setTabs(prev => {
-      if (prev.find(t => t.id === req.id)) return prev; // already open — just focus
+      if (prev.find(t => t.id === req.id)) return prev;
       return [...prev, { id: req.id, request: req, response: null, isLoading: false, error: null }];
     });
     setActiveTabId(req.id);
@@ -82,8 +86,25 @@ export default function App() {
     setActiveTabId(tabId);
   };
 
-  const closeTab = (tabId: string, e: React.MouseEvent) => {
-    e.stopPropagation();
+  const openScratchTab = () => {
+    const tabId = uuidv4();
+    const req: RestRequest = {
+      id: tabId,
+      collectionId: '',
+      name: 'New Request',
+      method: 'GET',
+      url: '',
+      headers: [],
+      body: '',
+      assertions: [],
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    };
+    setTabs(prev => [...prev, { id: tabId, request: req, response: null, isLoading: false, error: null, unsaved: true }]);
+    setActiveTabId(tabId);
+  };
+
+  const closeTab = (tabId: string) => {
     const idx = tabs.findIndex(t => t.id === tabId);
     const next = tabs.filter(t => t.id !== tabId);
     setTabs(next);
@@ -106,11 +127,33 @@ export default function App() {
 
   const handleSave = async (tabId: string, req: RestRequest) => {
     updateTab(tabId, { request: req });
-    // Unsaved (history-derived) tabs don't write to DB — they're ephemeral scratch tabs
     const tab = tabs.find(t => t.id === tabId);
-    if (tab?.unsaved) return;
+    if (tab?.unsaved) {
+      setSavingTab(tabId);
+      setShowSaveModal(true);
+      return;
+    }
     const { id, ...data } = req;
     await db.requests.update(id, data);
+  };
+
+  const handleConfirmSave = async (name: string, collectionId: string) => {
+    const tab = tabs.find(t => t.id === savingTab);
+    if (!tab) return;
+    const newReq: RestRequest = {
+      ...tab.request,
+      id: uuidv4(),
+      collectionId,
+      name,
+      updatedAt: Date.now(),
+    };
+    await db.requests.add(newReq);
+    setTabs(prev => prev.map(t =>
+      t.id === savingTab ? { ...t, id: newReq.id, request: newReq, unsaved: false } : t
+    ));
+    if (activeTabId === savingTab) setActiveTabId(newReq.id);
+    setShowSaveModal(false);
+    setSavingTab(null);
   };
 
   const handleExecute = async (tabId: string, req: RestRequest) => {
@@ -157,7 +200,39 @@ export default function App() {
     await loadActiveEnv();
   };
 
+  // ── Keyboard shortcuts ──────────────────────────────────────────────────────
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      const ctrl = e.ctrlKey || e.metaKey;
+      if (!ctrl) return;
+      const tag = (e.target as HTMLElement).tagName;
+      const inInput = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
+
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        if (activeTab && !activeTab.isLoading) handleExecute(activeTab.id, activeTab.request);
+      } else if (e.key === 's') {
+        e.preventDefault();
+        if (activeTab) handleSave(activeTab.id, activeTab.request);
+      } else if (e.key === 'w' && !inInput) {
+        e.preventDefault();
+        if (activeTabId && activeTabId !== HISTORY_TAB_ID) closeTab(activeTabId);
+      } else if (e.key === 't' && !inInput) {
+        e.preventDefault();
+        openScratchTab();
+      } else if (e.key === 'p' && !inInput) {
+        e.preventDefault();
+        setShowQuickOpen(prev => !prev);
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [activeTab, activeTabId, tabs]);
+
   // ── Render ──────────────────────────────────────────────────────────────────
+
+  const savingTabData = tabs.find(t => t.id === savingTab);
 
   return (
     <div className="flex h-screen bg-gray-900 text-gray-100 overflow-hidden">
@@ -175,7 +250,6 @@ export default function App() {
 
         {/* Tab bar */}
         <div className="flex items-stretch bg-gray-950 border-b border-gray-700 min-h-[38px]">
-          {/* Scrollable request tabs */}
           <div ref={tabBarRef} className="flex overflow-x-auto flex-1 min-w-0" style={{ scrollbarWidth: 'none' }}>
             {tabs.map(tab => {
               const isActive = tab.id === activeTabId;
@@ -201,7 +275,7 @@ export default function App() {
                     <span className="shrink-0 w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" />
                   )}
                   <button
-                    onClick={e => closeTab(tab.id, e)}
+                    onClick={e => { e.stopPropagation(); closeTab(tab.id); }}
                     className="shrink-0 text-gray-600 hover:text-white ml-0.5 leading-none text-base opacity-0 group-hover:opacity-100 transition-opacity"
                     title="Close tab"
                   >×</button>
@@ -248,6 +322,8 @@ export default function App() {
                   onSave={(req) => handleSave(activeTab.id, req)}
                   onExecute={(req) => handleExecute(activeTab.id, req)}
                   isLoading={activeTab.isLoading}
+                  unsaved={activeTab.unsaved}
+                  onSaveUnsaved={() => { setSavingTab(activeTab.id); setShowSaveModal(true); }}
                 />
               </div>
               <div className="flex-1 overflow-hidden">
@@ -272,6 +348,21 @@ export default function App() {
           onClose={() => setShowEnvManager(false)}
           activeEnvironmentId={activeEnvironment?.id ?? null}
           onSwitch={switchEnvironment}
+        />
+      )}
+
+      {showSaveModal && savingTabData && (
+        <SaveRequestModal
+          requestName={savingTabData.request.name}
+          onConfirm={handleConfirmSave}
+          onCancel={() => { setShowSaveModal(false); setSavingTab(null); }}
+        />
+      )}
+
+      {showQuickOpen && (
+        <QuickOpen
+          onSelect={openTab}
+          onClose={() => setShowQuickOpen(false)}
         />
       )}
     </div>

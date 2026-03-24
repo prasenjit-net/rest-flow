@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import axios from 'axios';
+import { JSONPath } from 'jsonpath-plus';
 import type { RestRequest, RestResponse, AssertionResult, Assertion } from '../types';
 
 function runAssertions(assertions: Assertion[], response: Omit<RestResponse, 'assertionResults'>): AssertionResult[] {
@@ -31,9 +32,16 @@ function runAssertions(assertions: Assertion[], response: Omit<RestResponse, 'as
         passed = response.body.includes(a.expected);
         message = `Body contains "${a.expected}": ${passed ? 'PASS' : 'FAIL'}`;
       } else if (a.type === 'BODY_JSON_PATH') {
-        // BODY_JSON_PATH not yet fully implemented
-        message = 'BODY_JSON_PATH not implemented';
-        passed = false;
+        const parsed = JSON.parse(response.body);
+        const results = JSONPath({ path: a.jsonPath ?? '$', json: parsed });
+        const actual = results.length > 0 ? String(results[0]) : '';
+        switch (a.operator) {
+          case 'eq': passed = actual === a.expected; break;
+          case 'neq': passed = actual !== a.expected; break;
+          case 'contains': passed = actual.includes(a.expected); break;
+          default: passed = false;
+        }
+        message = `JSONPath ${a.jsonPath} = "${actual}" ${a.operator} "${a.expected}": ${passed ? 'PASS' : 'FAIL'}`;
       }
     } catch (err: any) {
       message = `Error: ${err.message}`;
@@ -52,11 +60,53 @@ export async function executeRequest(request: RestRequest): Promise<RestResponse
     if (h.enabled && h.key) headers[h.key] = h.value;
   }
 
+  // Apply auth
+  const auth = request.auth;
+  if (auth?.type === 'bearer' && auth.token) {
+    headers['Authorization'] = `Bearer ${auth.token}`;
+  } else if (auth?.type === 'basic' && auth.username) {
+    headers['Authorization'] = `Basic ${btoa(`${auth.username}:${auth.password ?? ''}`)}`;
+  } else if (auth?.type === 'apikey' && auth.apiKeyName && auth.apiKeyValue) {
+    if (auth.apiKeyIn === 'header') {
+      headers[auth.apiKeyName] = auth.apiKeyValue;
+    }
+  }
+
+  // Build URL (append apikey query param if needed)
+  let requestUrl = request.url;
+  if (auth?.type === 'apikey' && auth.apiKeyIn === 'query' && auth.apiKeyName && auth.apiKeyValue) {
+    try {
+      const parsed = new URL(requestUrl);
+      parsed.searchParams.set(auth.apiKeyName, auth.apiKeyValue);
+      requestUrl = parsed.toString();
+    } catch {
+      requestUrl = `${requestUrl}${requestUrl.includes('?') ? '&' : '?'}${auth.apiKeyName}=${encodeURIComponent(auth.apiKeyValue)}`;
+    }
+  }
+
+  // Build request data based on body format
+  let data: string | FormData | URLSearchParams | undefined;
+  if (request.bodyFormat === 'form') {
+    const fd = new FormData();
+    for (const p of request.formParams ?? []) {
+      if (p.enabled && p.key) fd.append(p.key, p.value);
+    }
+    data = fd;
+  } else if (request.bodyFormat === 'urlencoded') {
+    const usp = new URLSearchParams();
+    for (const p of request.formParams ?? []) {
+      if (p.enabled && p.key) usp.append(p.key, p.value);
+    }
+    data = usp;
+  } else {
+    data = request.body || undefined;
+  }
+
   const axiosResponse = await axios({
     method: request.method,
-    url: request.url,
+    url: requestUrl,
     headers,
-    data: request.body || undefined,
+    data,
     validateStatus: () => true,
   });
 
@@ -85,3 +135,4 @@ export async function executeRequest(request: RestRequest): Promise<RestResponse
     assertionResults: runAssertions(request.assertions, partial),
   };
 }
+

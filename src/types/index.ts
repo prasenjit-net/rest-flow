@@ -1,5 +1,26 @@
 export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD' | 'OPTIONS';
 
+export type BodyFormat = 'raw' | 'json' | 'form' | 'urlencoded';
+
+export interface FormParam {
+  id: string;
+  key: string;
+  value: string;
+  enabled: boolean;
+}
+
+export type AuthType = 'none' | 'bearer' | 'basic' | 'apikey';
+
+export interface AuthConfig {
+  type: AuthType;
+  token?: string;
+  username?: string;
+  password?: string;
+  apiKeyName?: string;
+  apiKeyValue?: string;
+  apiKeyIn?: 'header' | 'query';
+}
+
 export interface Header {
   id: string;
   key: string;
@@ -33,6 +54,9 @@ export interface RestRequest {
   url: string;
   headers: Header[];
   body: string;
+  bodyFormat?: BodyFormat;
+  formParams?: FormParam[];
+  auth?: AuthConfig;
   assertions: Assertion[];
   createdAt: number;
   updatedAt: number;

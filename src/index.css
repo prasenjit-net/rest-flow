@@ -22,3 +22,34 @@ body {
   background: #4b5563;
   border-radius: 3px;
 }
+
+/* Prism.js dark theme for response syntax highlighting */
+.token.comment,
+.token.prolog,
+.token.doctype,
+.token.cdata { color: #6b7280; }
+.token.punctuation { color: #9ca3af; }
+.token.property,
+.token.tag,
+.token.boolean,
+.token.number,
+.token.constant,
+.token.symbol { color: #60a5fa; }
+.token.selector,
+.token.attr-name,
+.token.string,
+.token.char,
+.token.builtin { color: #34d399; }
+.token.operator,
+.token.entity,
+.token.url,
+.language-css .token.string,
+.style .token.string { color: #f9a8d4; }
+.token.atrule,
+.token.attr-value,
+.token.keyword { color: #a78bfa; }
+.token.function { color: #fbbf24; }
+.token.regex,
+.token.important,
+.token.variable { color: #fb923c; }
+
