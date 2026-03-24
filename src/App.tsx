@@ -3,7 +3,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { db } from './db/db';
 import { executeRequest } from './services/executor';
 import { resolveVariables } from './services/variableService';
-import type { RestRequest, RestEnvironment, RestResponse } from './types';
+import type { RestRequest, RestEnvironment, RestResponse, HistoryEntry } from './types';
 import Sidebar from './components/Sidebar';
 import RequestEditor from './components/RequestEditor';
 import ResponseViewer from './components/ResponseViewer';
@@ -14,11 +14,12 @@ const HISTORY_LIMIT = 500;
 const HISTORY_TAB_ID = '__history__';
 
 interface RequestTab {
-  id: string; // = request.id — used for deduplication
+  id: string; // = request.id for saved requests; fresh UUID for unsaved history tabs
   request: RestRequest;
   response: RestResponse | null;
   isLoading: boolean;
   error: string | null;
+  unsaved?: boolean; // true for tabs created from history — not persisted to DB
 }
 
 const METHOD_COLORS: Record<string, string> = {
@@ -63,6 +64,24 @@ export default function App() {
     setActiveTabId(req.id);
   };
 
+  const openTabFromHistory = (entry: HistoryEntry) => {
+    const tabId = uuidv4();
+    const req: RestRequest = {
+      id: tabId,
+      collectionId: entry.collectionId,
+      name: `${entry.requestName} (copy)`,
+      method: entry.method,
+      url: entry.url,
+      headers: entry.headers,
+      body: entry.body,
+      assertions: entry.assertions,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    };
+    setTabs(prev => [...prev, { id: tabId, request: req, response: null, isLoading: false, error: null, unsaved: true }]);
+    setActiveTabId(tabId);
+  };
+
   const closeTab = (tabId: string, e: React.MouseEvent) => {
     e.stopPropagation();
     const idx = tabs.findIndex(t => t.id === tabId);
@@ -87,6 +106,9 @@ export default function App() {
 
   const handleSave = async (tabId: string, req: RestRequest) => {
     updateTab(tabId, { request: req });
+    // Unsaved (history-derived) tabs don't write to DB — they're ephemeral scratch tabs
+    const tab = tabs.find(t => t.id === tabId);
+    if (tab?.unsaved) return;
     const { id, ...data } = req;
     await db.requests.update(id, data);
   };
@@ -172,6 +194,9 @@ export default function App() {
                     {tab.request.method}
                   </span>
                   <span className="truncate flex-1 text-xs">{tab.request.name}</span>
+                  {tab.unsaved && (
+                    <span className="shrink-0 w-1.5 h-1.5 rounded-full bg-amber-400" title="Unsaved (from history)" />
+                  )}
                   {tab.isLoading && (
                     <span className="shrink-0 w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" />
                   )}
@@ -213,7 +238,7 @@ export default function App() {
         <div className="flex-1 overflow-hidden">
           {activeTabId === HISTORY_TAB_ID ? (
             <HistoryBrowser
-              onLoadRequest={(req) => openTab(req)}
+              onLoadFromHistory={openTabFromHistory}
             />
           ) : activeTab ? (
             <div className="flex h-full overflow-hidden">

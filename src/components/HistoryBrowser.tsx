@@ -1,9 +1,9 @@
 import { useState, useEffect } from 'react';
 import { db } from '../db/db';
-import type { HistoryEntry, RestRequest, RestCollection } from '../types';
+import type { HistoryEntry, RestCollection } from '../types';
 
 interface Props {
-  onLoadRequest: (req: RestRequest) => void;
+  onLoadFromHistory: (entry: HistoryEntry) => void;
 }
 
 function statusColor(status: number): string {
@@ -28,7 +28,7 @@ function formatTime(ts: number): string {
 
 type ResponseTab = 'body' | 'headers' | 'assertions';
 
-export default function HistoryBrowser({ onLoadRequest }: Props) {
+export default function HistoryBrowser({ onLoadFromHistory }: Props) {
   const [entries, setEntries] = useState<HistoryEntry[]>([]);
   const [collections, setCollections] = useState<RestCollection[]>([]);
   const [filterCollectionId, setFilterCollectionId] = useState('');
@@ -83,18 +83,7 @@ export default function HistoryBrowser({ onLoadRequest }: Props) {
   };
 
   const handleUseRequest = (entry: HistoryEntry) => {
-    onLoadRequest({
-      id: entry.requestId,
-      collectionId: entry.collectionId,
-      name: entry.requestName,
-      method: entry.method,
-      url: entry.url,
-      headers: entry.headers,
-      body: entry.body,
-      assertions: entry.assertions,
-      createdAt: entry.executedAt,
-      updatedAt: entry.executedAt,
-    });
+    onLoadFromHistory(entry);
   };
 
   return (
@@ -200,7 +189,7 @@ export default function HistoryBrowser({ onLoadRequest }: Props) {
                   onClick={() => handleUseRequest(selected)}
                   className="ml-auto text-xs bg-blue-700 hover:bg-blue-600 text-white rounded px-3 py-1 font-medium"
                 >
-                  Load in Editor →
+                  Open in New Tab ↗
                 </button>
               </div>
             </div>
