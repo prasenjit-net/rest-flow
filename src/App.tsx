@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { v4 as uuidv4 } from 'uuid';
 import { db } from './db/db';
 import { executeRequest } from './services/executor';
 import { resolveVariables } from './services/variableService';
@@ -7,6 +8,9 @@ import Sidebar from './components/Sidebar';
 import RequestEditor from './components/RequestEditor';
 import ResponseViewer from './components/ResponseViewer';
 import EnvironmentManager from './components/EnvironmentManager';
+import HistoryPanel from './components/HistoryPanel';
+
+const HISTORY_LIMIT = 500;
 
 export default function App() {
   const [selectedRequest, setSelectedRequest] = useState<RestRequest | null>(null);
@@ -15,6 +19,7 @@ export default function App() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showEnvManager, setShowEnvManager] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
 
   const loadActiveEnv = async () => {
     const env = await db.environments.filter(e => e.isActive).first();
@@ -22,7 +27,9 @@ export default function App() {
   };
 
   useEffect(() => {
-    loadActiveEnv();
+    db.environments.filter(e => e.isActive).first().then(env => {
+      setActiveEnvironment(env ?? null);
+    });
     const id = setInterval(loadActiveEnv, 3000);
     return () => clearInterval(id);
   }, []);
@@ -47,6 +54,33 @@ export default function App() {
       const resolved = resolveVariables(req, activeEnvironment);
       const res = await executeRequest(resolved);
       setResponse(res);
+
+      // Save to history
+      const collection = await db.collections.get(req.collectionId);
+      await db.history.add({
+        id: uuidv4(),
+        requestId: req.id,
+        collectionId: req.collectionId,
+        requestName: req.name,
+        collectionName: collection?.name ?? 'Unknown',
+        method: resolved.method,
+        url: resolved.url,
+        headers: resolved.headers,
+        body: resolved.body,
+        assertions: resolved.assertions,
+        response: res,
+        executedAt: Date.now(),
+      });
+
+      // Prune history to latest HISTORY_LIMIT entries
+      const count = await db.history.count();
+      if (count > HISTORY_LIMIT) {
+        const oldest = await db.history
+          .orderBy('executedAt')
+          .limit(count - HISTORY_LIMIT)
+          .primaryKeys();
+        await db.history.bulkDelete(oldest as string[]);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -72,7 +106,14 @@ export default function App() {
       </div>
 
       <div className="flex-1 flex flex-col overflow-hidden">
-        <div className="flex items-center justify-end gap-3 px-4 py-2 border-b border-gray-700 bg-gray-900">
+        {/* Top bar */}
+        <div className="flex items-center justify-between px-4 py-2 border-b border-gray-700 bg-gray-900">
+          <button
+            onClick={() => setShowHistory(true)}
+            className="flex items-center gap-1.5 text-sm text-gray-300 hover:text-white border border-gray-600 rounded px-3 py-1 hover:border-gray-400"
+          >
+            <span>🕐</span> History
+          </button>
           <button
             onClick={() => setShowEnvManager(true)}
             className="flex items-center gap-1.5 text-sm text-gray-300 hover:text-white border border-gray-600 rounded px-3 py-1 hover:border-gray-400"
@@ -82,6 +123,7 @@ export default function App() {
           </button>
         </div>
 
+        {/* Editor + Response split */}
         <div className="flex-1 flex overflow-hidden">
           {selectedRequest ? (
             <>
@@ -114,6 +156,16 @@ export default function App() {
           onClose={() => setShowEnvManager(false)}
           activeEnvironmentId={activeEnvironment?.id ?? null}
           onSwitch={switchEnvironment}
+        />
+      )}
+
+      {showHistory && (
+        <HistoryPanel
+          onClose={() => setShowHistory(false)}
+          onLoadRequest={(req) => {
+            handleSelectRequest(req);
+            setShowHistory(false);
+          }}
         />
       )}
     </div>

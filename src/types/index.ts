@@ -67,3 +67,18 @@ export interface RestResponse {
   body: string;
   assertionResults: AssertionResult[];
 }
+
+export interface HistoryEntry {
+  id: string;
+  requestId: string;
+  collectionId: string;
+  requestName: string;
+  collectionName: string;
+  method: HttpMethod;
+  url: string;
+  headers: Header[];
+  body: string;
+  assertions: Assertion[];
+  response: RestResponse;
+  executedAt: number;
+}
